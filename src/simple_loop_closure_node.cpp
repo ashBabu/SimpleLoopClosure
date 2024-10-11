@@ -14,34 +14,56 @@ void SimpleLoopClosureNode::initialize()
   pub_vis_pose_graph_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/vis_pose_graph", 1);
   pub_pgo_odometry_ = this->create_publisher<nav_msgs::msg::Odometry>("/pgo_odom", 1);
 
-  mapped_cloud_ = this->declare_parameter("mapped_cloud", true);
-  time_stamp_tolerance_ = this->declare_parameter("time_stamp_tolerance", 0.01);
-  keyframe_dist_th_ = this->declare_parameter("keyframe_dist_th", 0.3);
-  keyframe_angular_dist_th_ = this->declare_parameter("keyframe_angular_dist_th", 0.2);
-  loop_search_time_diff_th_ = this->declare_parameter("loop_search_time_diff_th", 30.0);
-  loop_search_dist_diff_th_ = this->declare_parameter("loop_search_dist_diff_th", 30.0);
-  loop_search_angular_dist_th_ = this->declare_parameter("loop_search_angular_dist_th", 3.14);
-  loop_search_frame_interval_ = this->declare_parameter("loop_search_frame_interval", 1);
-  search_radius_ = this->declare_parameter("search_radius", 15.0);
+  this->declare_parameter<bool>("mapped_cloud", true);
+  this->declare_parameter<double>("time_stamp_tolerance", 0.01);
+  this->declare_parameter<double>("keyframe_dist_th", 0.3);
+  this->declare_parameter<double>("keyframe_angular_dist_th", 0.2);
+  this->declare_parameter<double>("loop_search_time_diff_th", 30.0);
+  this->declare_parameter<double>("loop_search_dist_diff_th", 30.0);
+  this->declare_parameter<double>("loop_search_angular_dist_th", 3.14);
+  this->declare_parameter<int>("loop_search_frame_interval", 1);
+  this->declare_parameter<double>("search_radius", 15.0);
+  this->declare_parameter<int>("target_frame_num", 50);
+  this->declare_parameter<double>("target_voxel_leaf_size", 0.4);
+  this->declare_parameter<double>("source_voxel_leaf_size", 0.4);
+  this->declare_parameter<double>("vis_map_voxel_leaf_size", 0.8);
+  this->declare_parameter<double>("fitness_score_th", 0.3);
+  this->declare_parameter<int>("vis_map_cloud_frame_interval", 3);
+
+  this->get_parameter("mapped_cloud", mapped_cloud_);
+  this->get_parameter("time_stamp_tolerance", time_stamp_tolerance_);
+  this->get_parameter("keyframe_dist_th", keyframe_dist_th_);
+  this->get_parameter("keyframe_angular_dist_th", keyframe_angular_dist_th_);
+  this->get_parameter("loop_search_time_diff_th", loop_search_time_diff_th_);
+  this->get_parameter("loop_search_dist_diff_th", loop_search_dist_diff_th_);
+  this->get_parameter("loop_search_angular_dist_th", loop_search_angular_dist_th_);
+  this->get_parameter("loop_search_frame_interval", loop_search_frame_interval_);
+  this->get_parameter("search_radius", search_radius_);
+  this->get_parameter("target_frame_num", target_frame_num_);
+  this->get_parameter("target_voxel_leaf_size", target_voxel_leaf_size_);
+  this->get_parameter("source_voxel_leaf_size", source_voxel_leaf_size_);
+  this->get_parameter("vis_map_voxel_leaf_size", vis_map_voxel_leaf_size_);
+  this->get_parameter("fitness_score_th", fitness_score_th_);
+  this->get_parameter("vis_map_cloud_frame_interval", vis_map_cloud_frame_interval_);
+
   search_radius_ *= search_radius_;
-  target_frame_num_ = this->declare_parameter("target_frame_num", 50);
-  target_voxel_leaf_size_ = this->declare_parameter("target_voxel_leaf_size", 0.4);
-  source_voxel_leaf_size_ = this->declare_parameter("source_voxel_leaf_size", 0.4);
-  vis_map_voxel_leaf_size_ = this->declare_parameter("vis_map_voxel_leaf_size", 0.8);
-  fitness_score_th_ = this->declare_parameter("fitness_score_th", 0.3);
-  vis_map_cloud_frame_interval_ = this->declare_parameter("vis_map_cloud_frame_interval", 3);
 
   sub_cloud_.subscribe(this, "/cloud");
   sub_odom_.subscribe(this, "/odometry");
 
   // synchronizer_.reset(new Sync(SyncPolicy(50), sub_cloud_, sub_odom_));
-  synchronizer_.reset(new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(50), sub_cloud_, sub_odom_));
-  synchronizer_->setMaxIntervalDuration(rclcpp::Duration(time_stamp_tolerance_, 0));
-  synchronizer_->registerCallback(std::bind(&SimpleLoopClosureNode::pointCloudAndOdometryCallback, this, std::placeholders::_1, std::placeholders::_2));
+  // synchronizer_.reset(new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(50), sub_cloud_, sub_odom_));
+  // synchronizer_->setMaxIntervalDuration(rclcpp::Duration(time_stamp_tolerance_, 0));
 
-  // sub_save_req_  = this->create_subscription<std_msgs::msg::String>("/save_req", 1, &SimpleLoopClosureNode::saveRequestCallback, this);
-  sub_save_req_ = this->create_subscription<std_msgs::msg::String>("/save_req", 10,
-                                                                   std::bind(&SimpleLoopClosureNode::saveRequestCallback, this, std::placeholders::_1));
+  synchronizer_ = std::make_shared<Sync>(SyncPolicy(50), sub_cloud_, sub_odom_);
+  synchronizer_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(time_stamp_tolerance_));
+  synchronizer_->registerCallback(std::bind(&SimpleLoopClosureNode::pointCloudAndOdometryCallback, this,
+                                            std::placeholders::_1, std::placeholders::_2));
+
+  // sub_save_req_  = this->create_subscription<std_msgs::msg::String>("/save_req", 1,
+  // &SimpleLoopClosureNode::saveRequestCallback, this);
+  sub_save_req_ = this->create_subscription<std_msgs::msg::String>(
+      "/save_req", 10, std::bind(&SimpleLoopClosureNode::saveRequestCallback, this, std::placeholders::_1));
 
   icp_.setMaximumIterations(50);
   icp_.setMaxCorrespondenceDistance(search_radius_ * 2.0);
@@ -94,7 +116,7 @@ void SimpleLoopClosureNode::initialize()
 bool SimpleLoopClosureNode::saveEachFrames()
 {
   std::string frames_directory = save_directory_ + "frames/";
-  if (!boost::filesystem::create_directory(frames_directory))
+  if (!std::filesystem::create_directory(frames_directory))
   {
     return false;
   }
@@ -138,10 +160,9 @@ bool SimpleLoopClosureNode::saveEachFrames()
     Eigen::Quaterniond quat(pose.rotation());
     Eigen::Vector3d trans = pose.translation();
     pcl::io::savePCDFileBinary(frames_directory + frame_filename_str.str(), copied_cloud);
-    poses_csv_file << std::fixed << i << ", "
-                   << pcl_conversions::fromPCL(copied_cloud.header.stamp).seconds() << ", "
-                   << trans.x() << ", " << trans.y() << ", " << trans.z() << ", "
-                   << quat.x() << ", " << quat.y() << ", " << quat.z() << ", " << quat.w() << std::endl;
+    poses_csv_file << std::fixed << i << ", " << pcl_conversions::fromPCL(copied_cloud.header.stamp).seconds() << ", "
+                   << trans.x() << ", " << trans.y() << ", " << trans.z() << ", " << quat.x() << ", " << quat.y()
+                   << ", " << quat.z() << ", " << quat.w() << std::endl;
   }
 
   poses_csv_file.close();
@@ -181,7 +202,7 @@ void SimpleLoopClosureNode::saveThread()
   saving_ = false;
 }
 
-void SimpleLoopClosureNode::saveRequestCallback(const std_msgs::msg::String::ConstSharedPtr &directory)
+void SimpleLoopClosureNode::saveRequestCallback(const std_msgs::msg::String::ConstSharedPtr& directory)
 {
   if (saving_ == true)
   {
@@ -201,7 +222,8 @@ void SimpleLoopClosureNode::saveRequestCallback(const std_msgs::msg::String::Con
   save_thread_ = std::thread(&SimpleLoopClosureNode::saveThread, this);
 }
 
-void SimpleLoopClosureNode::publishPoseGraphOptimizedOdometry(const Eigen::Affine3d &affine_curr, const nav_msgs::msg::Odometry &odom_msg)
+void SimpleLoopClosureNode::publishPoseGraphOptimizedOdometry(const Eigen::Affine3d& affine_curr,
+                                                              const nav_msgs::msg::Odometry& odom_msg)
 {
   Eigen::Affine3d pgo_affine;
 
@@ -225,8 +247,9 @@ void SimpleLoopClosureNode::publishPoseGraphOptimizedOdometry(const Eigen::Affin
   pub_pgo_odometry_->publish(pgo_odom_msg);
 }
 
-void SimpleLoopClosureNode::pointCloudAndOdometryCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &cloud_msg,
-                                                          const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg)
+void SimpleLoopClosureNode::pointCloudAndOdometryCallback(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud_msg,
+    const nav_msgs::msg::Odometry::ConstSharedPtr& odom_msg)
 {
   PointCloudType::Ptr cloud_curr(new PointCloudType);
   pcl::fromROSMsg(*cloud_msg, *cloud_curr);
@@ -266,7 +289,8 @@ void SimpleLoopClosureNode::pointCloudAndOdometryCallback(const sensor_msgs::msg
     if (trajectory_dist_.empty())
       trajectory_dist_.push_back(0);
     else
-      trajectory_dist_.push_back(trajectory_dist_.back() + (keyframes_odom_.back()->translation() - affine_curr->translation()).norm());
+      trajectory_dist_.push_back(trajectory_dist_.back() +
+                                 (keyframes_odom_.back()->translation() - affine_curr->translation()).norm());
 
     keyframes_cloud_.push_back(cloud_curr);
     keyframes_odom_.push_back(affine_curr);
@@ -310,7 +334,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr SimpleLoopClosureNode::constructPointCloudM
   return map_cloud;
 }
 
-void SimpleLoopClosureNode::publishMapCloud(const PointCloudType::Ptr &map_cloud)
+void SimpleLoopClosureNode::publishMapCloud(const PointCloudType::Ptr& map_cloud)
 {
   if (map_cloud == NULL)
     return;
@@ -328,8 +352,9 @@ void SimpleLoopClosureNode::publishMapCloud(const PointCloudType::Ptr &map_cloud
   pub_map_cloud_->publish(map_cloud_msg);
 }
 
-void SimpleLoopClosureNode::constructVisualizationOdometryEdges(const int &res_size, const std_msgs::msg::Header &header,
-                                                                visualization_msgs::msg::Marker &marker_msg)
+void SimpleLoopClosureNode::constructVisualizationOdometryEdges(const int& res_size,
+                                                                const std_msgs::msg::Header& header,
+                                                                visualization_msgs::msg::Marker& marker_msg)
 {
   marker_msg.header = header;
   marker_msg.ns = "odom_edges";
@@ -360,8 +385,8 @@ void SimpleLoopClosureNode::constructVisualizationOdometryEdges(const int &res_s
   }
 }
 
-void SimpleLoopClosureNode::constructVisualizationLoopEdges(const int &res_size, const std_msgs::msg::Header &header,
-                                                            visualization_msgs::msg::Marker &marker_msg)
+void SimpleLoopClosureNode::constructVisualizationLoopEdges(const int& res_size, const std_msgs::msg::Header& header,
+                                                            visualization_msgs::msg::Marker& marker_msg)
 {
   int edge_num;
   {
@@ -405,8 +430,8 @@ void SimpleLoopClosureNode::constructVisualizationLoopEdges(const int &res_size,
   }
 }
 
-void SimpleLoopClosureNode::constructVisualizationNodes(const int &res_size, const std_msgs::msg::Header &header,
-                                                        visualization_msgs::msg::Marker &marker_msg)
+void SimpleLoopClosureNode::constructVisualizationNodes(const int& res_size, const std_msgs::msg::Header& header,
+                                                        visualization_msgs::msg::Marker& marker_msg)
 {
   marker_msg.header = header;
   marker_msg.ns = "nodes";
@@ -459,18 +484,6 @@ void SimpleLoopClosureNode::publishVisualizationGraph()
   pub_vis_pose_graph_->publish(marker_array_msg);
 }
 
-void SimpleLoopClosureNode::visualizeThread()
-{
-  rclcpp::Rate rate(1);
-  while (rclcpp::ok() && !stop_visualize_thread_)
-  {
-    PointCloudType::Ptr map_cloud = constructPointCloudMap(vis_map_cloud_frame_interval_);
-    publishMapCloud(map_cloud);
-    publishVisualizationGraph();
-    rate.sleep();
-  }
-}
-
 void SimpleLoopClosureNode::copyKeyFrames()
 {
   MtxLockGuard guard(mtx_buf_);
@@ -482,7 +495,7 @@ void SimpleLoopClosureNode::copyKeyFrames()
   }
 }
 
-void SimpleLoopClosureNode::getLastOptimizedPose(Eigen::Affine3d &pose, int &id)
+void SimpleLoopClosureNode::getLastOptimizedPose(Eigen::Affine3d& pose, int& id)
 {
   MtxLockGuard guard(mtx_res_);
   if (!optimization_result_.empty())
@@ -506,7 +519,7 @@ void SimpleLoopClosureNode::getLastOptimizedPose(Eigen::Affine3d &pose, int &id)
   }
 }
 
-bool SimpleLoopClosureNode::constructOdometryGraph(gtsam::NonlinearFactorGraph &graph, gtsam::Values &init_estimate)
+bool SimpleLoopClosureNode::constructOdometryGraph(gtsam::NonlinearFactorGraph& graph, gtsam::Values& init_estimate)
 {
   if (added_odom_id_ >= keyframes_odom_copied_.size())
     return false;
@@ -527,7 +540,8 @@ bool SimpleLoopClosureNode::constructOdometryGraph(gtsam::NonlinearFactorGraph &
     Eigen::Affine3d pose_diff = keyframes_odom_copied_[i - 1]->inverse() * (*keyframes_odom_copied_[i]);
     graph.add(gtsam::BetweenFactor<gtsam::Pose3>(i - 1, i, gtsam::Pose3(pose_diff.matrix()), odom_noise_));
 
-    Eigen::Affine3d pose_init = optimized_pose_last * (keyframes_odom_copied_[optimized_pose_id_last]->inverse() * (*keyframes_odom_copied_[i]));
+    Eigen::Affine3d pose_init = optimized_pose_last * (keyframes_odom_copied_[optimized_pose_id_last]->inverse() *
+                                                       (*keyframes_odom_copied_[i]));
     init_estimate.insert(i, gtsam::Pose3(pose_init.matrix()));
 
     added_odom_id_++;
@@ -536,7 +550,7 @@ bool SimpleLoopClosureNode::constructOdometryGraph(gtsam::NonlinearFactorGraph &
   return true;
 }
 
-bool SimpleLoopClosureNode::constructKDTreeMatrix(KDTreeMatrix &kdtree_mat)
+bool SimpleLoopClosureNode::constructKDTreeMatrix(KDTreeMatrix& kdtree_mat)
 {
   MtxLockGuard guard(mtx_res_);
   if (optimization_result_.empty())
@@ -553,7 +567,8 @@ bool SimpleLoopClosureNode::constructKDTreeMatrix(KDTreeMatrix &kdtree_mat)
   return true;
 }
 
-int SimpleLoopClosureNode::searchTarget(const KDTree &kdtree, const int &id_query, const Eigen::Affine3d &pose_query, const rclcpp::Time &stamp_query)
+int SimpleLoopClosureNode::searchTarget(const KDTree& kdtree, const int& id_query, const Eigen::Affine3d& pose_query,
+                                        const rclcpp::Time& stamp_query)
 {
   NanoFlannSearchResult search_result;
   search_result.reserve(1000);
@@ -572,13 +587,14 @@ int SimpleLoopClosureNode::searchTarget(const KDTree &kdtree, const int &id_quer
     Eigen::Affine3d affine_target;
     {
       MtxLockGuard guard(mtx_res_);
-      affine_target = Eigen::Affine3d(optimization_result_.at<gtsam::Pose3>(i).matrix());
+      affine_target = Eigen::Affine3d(optimization_result_.at<gtsam::Pose3>(tmp_id).matrix());
     }
 
     Eigen::Quaterniond quat_target(affine_target.rotation());
     double angle_diff = quat_query.angularDistance(quat_target);
     double dist_diff = std::fabs(trajectory_dist_copied_[id_query] - trajectory_dist_copied_[tmp_id]);
-    if (time_diff > loop_search_time_diff_th_ && angle_diff < loop_search_angular_dist_th_ && dist_diff > loop_search_dist_diff_th_)
+    if (time_diff > loop_search_time_diff_th_ && angle_diff < loop_search_angular_dist_th_ &&
+        dist_diff > loop_search_dist_diff_th_)
     {
       target_id = tmp_id;
       break;
@@ -640,7 +656,9 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr SimpleLoopClosureNode::constructSourceCloud
   return source_cloud_ds;
 }
 
-bool SimpleLoopClosureNode::tryRegistration(const Eigen::Affine3d &init_pose, const PointCloudType::Ptr &source_cloud, const PointCloudType::Ptr &target_cloud, Eigen::Affine3d &result, double &score)
+bool SimpleLoopClosureNode::tryRegistration(const Eigen::Affine3d& init_pose, const PointCloudType::Ptr& source_cloud,
+                                            const PointCloudType::Ptr& target_cloud, Eigen::Affine3d& result,
+                                            double& score)
 {
   PointCloudType::Ptr unused_cloud(new PointCloudType);
   icp_.setInputSource(source_cloud);
@@ -657,7 +675,7 @@ bool SimpleLoopClosureNode::tryRegistration(const Eigen::Affine3d &init_pose, co
   return false;
 }
 
-bool SimpleLoopClosureNode::constructLoopEdge(gtsam::NonlinearFactorGraph &graph)
+bool SimpleLoopClosureNode::constructLoopEdge(gtsam::NonlinearFactorGraph& graph)
 {
   if (searched_loop_id_ >= keyframes_cloud_copied_.size())
     return false;
@@ -675,7 +693,8 @@ bool SimpleLoopClosureNode::constructLoopEdge(gtsam::NonlinearFactorGraph &graph
 
   for (size_t i = searched_loop_id_; i < keyframes_cloud_copied_.size(); i += (loop_search_frame_interval_ + 1))
   {
-    Eigen::Affine3d pose_query = optimized_pose_last * (keyframes_odom_copied_[optimized_pose_id_last]->inverse() * (*keyframes_odom_copied_[i]));
+    Eigen::Affine3d pose_query = optimized_pose_last * (keyframes_odom_copied_[optimized_pose_id_last]->inverse() *
+                                                        (*keyframes_odom_copied_[i]));
     rclcpp::Time stamp_query = pcl_conversions::fromPCL(keyframes_cloud_copied_[i]->header.stamp);
 
     int target_id = searchTarget(kdtree, i, pose_query, stamp_query);
@@ -692,7 +711,8 @@ bool SimpleLoopClosureNode::constructLoopEdge(gtsam::NonlinearFactorGraph &graph
 
     Eigen::VectorXd noise_vector(6);
     noise_vector << fitness_score, fitness_score, fitness_score, fitness_score, fitness_score, fitness_score;
-    gtsam::SharedNoiseModel constraint_noise = gtsam::noiseModel::Robust::Create(gtsam::noiseModel::mEstimator::Cauchy::Create(1), gtsam::noiseModel::Diagonal::Variances(noise_vector));
+    gtsam::SharedNoiseModel constraint_noise = gtsam::noiseModel::Robust::Create(
+        gtsam::noiseModel::mEstimator::Cauchy::Create(1), gtsam::noiseModel::Diagonal::Variances(noise_vector));
 
     Eigen::Affine3d target_pose;
     {
@@ -714,7 +734,7 @@ bool SimpleLoopClosureNode::constructLoopEdge(gtsam::NonlinearFactorGraph &graph
   return true;
 }
 
-bool SimpleLoopClosureNode::updateISAM2(const gtsam::NonlinearFactorGraph &graph, const gtsam::Values &init_estimate)
+bool SimpleLoopClosureNode::updateISAM2(const gtsam::NonlinearFactorGraph& graph, const gtsam::Values& init_estimate)
 {
   if (graph.empty())
     return false;
@@ -733,9 +753,24 @@ bool SimpleLoopClosureNode::updateISAM2(const gtsam::NonlinearFactorGraph &graph
   return true;
 }
 
+void SimpleLoopClosureNode::visualizeThread()
+{
+  // rclcpp::Rate rate(1);
+  const std::chrono::seconds rate_duration(1);
+  while (rclcpp::ok() && !stop_visualize_thread_)
+  {
+    PointCloudType::Ptr map_cloud = constructPointCloudMap(vis_map_cloud_frame_interval_);
+    publishMapCloud(map_cloud);
+    publishVisualizationGraph();
+    // rate.sleep();
+    std::this_thread::sleep_for(rate_duration);
+  }
+}
+
 void SimpleLoopClosureNode::loopCloseThread()
 {
-  rclcpp::Rate rate(1);
+  // rclcpp::Rate rate(1);
+  const std::chrono::seconds rate_duration(1);
   while (rclcpp::ok() && !stop_loop_closure_thread_)
   {
     gtsam::NonlinearFactorGraph graph;
@@ -746,7 +781,8 @@ void SimpleLoopClosureNode::loopCloseThread()
     constructLoopEdge(graph);
     updateISAM2(graph, init_estimate);
 
-    rate.sleep();
+    // rate.sleep();
+    std::this_thread::sleep_for(rate_duration);
   }
 }
 
@@ -760,29 +796,30 @@ void SimpleLoopClosureNode::spin()
 
   RCLCPP_INFO(this->get_logger(), "Loop Closure Started");
   // rclcpp::spin(Node);
-  rclcpp::spin(shared_from_this());
+  // rclcpp::spin(this->Node);
+  // rclcpp::spin(shared_from_this());
 
   stop_loop_closure_thread_ = true;
   stop_visualize_thread_ = true;
 
   loop_close_thread.join();
   visualize_thread.join();
+  // if (loop_close_thread.joinable())
+    // loop_close_thread.join();
+  // if (visualize_thread.joinable())
+    // visualize_thread.join();
   if (save_thread_.joinable())
     save_thread_.join();
 }
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
   // SimpleLoopClosureNode loop_closure_node;
-  SimpleLoopClosureNode::Ptr node = std::make_shared<SimpleLoopClosureNode>();
-  rclcpp::spin(node); // Call spin method of the node
+  SimpleLoopClosureNode::Ptr loop_closure_node = std::make_shared<SimpleLoopClosureNode>();
+  // auto loop_closure_node = std::make_shared<SharedSimpleLoopClosureNode>();
+  loop_closure_node->spin();
+  rclcpp::spin(loop_closure_node);  // Call spin method of the node
   rclcpp::shutdown();
   return 0;
-  // loop_closure_node.spin();
-  // laserscan_fuser::LaserscanFuser::Ptr node = std::make_shared<laserscan_fuser::LaserscanFuser>();
-  // rclcpp::spin(node);
-  // rclcpp::shutdown();
-
-  // return 0;
 }

@@ -23,16 +23,9 @@ find_package(pcl_ros REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(tf2 REQUIRED)
 
-# catkin_package(
-#   INCLUDE_DIRS include
-#   CATKIN_DEPENDS geometry_msgs message_filters nav_msgs pcl_conversions pcl_ros roscpp rospy sensor_msgs std_msgs tf
-#   DEPENDS system_lib
-# )
-
 include_directories(
   include
   thirdparty/nanoflann/include
-  # ${catkin_INCLUDE_DIRS}
   ${GTSAM_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${Boost_INCLUDE_DIR}
@@ -58,7 +51,6 @@ ament_target_dependencies(${PROJECT_NAME}_node
   "tf2_eigen"
 )
 target_link_libraries(${PROJECT_NAME}_node
-  # ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
   ${PCL_LIBRARIES}
   gtsam

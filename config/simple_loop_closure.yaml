@@ -1,0 +1,17 @@
+simple_loop_closure:
+  ros__parameters:
+    mapped_cloud: true
+    time_stamp_tolerance: 0.01
+    keyframe_dist_th: 0.5
+    keyframe_angular_dist_th: 0.3
+    loop_search_time_diff_th: 30.0
+    loop_search_dist_diff_th: 30.0
+    loop_search_angular_dist_th: 3.1415
+    loop_search_frame_interval: 1
+    search_radius: 15.0
+    target_frame_num: 50
+    target_voxel_leaf_size: 0.4
+    source_voxel_leaf_size: 0.4
+    vis_map_voxel_leaf_size: 0.8
+    fitness_score_th: 0.3
+    vis_map_cloud_frame_interval: 3

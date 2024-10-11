@@ -2,15 +2,11 @@
 
 #define PCL_NO_PRECOMPILE
 
-// #include <ros/ros.h>
 #include <rclcpp/rclcpp.hpp>
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
-// #include <std_msgs/String.h>
 #include <std_msgs/msg/string.hpp>
-// #include <nav_msgs/Odometry.h>
-// #include <visualization_msgs/MarkerArray.h>
 #include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <message_filters/subscriber.h>
@@ -20,8 +16,7 @@
 
 #include <Eigen/Dense>
 
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/operations.hpp>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 
@@ -52,6 +47,8 @@
 #include <thread>
 #include <mutex>
 #include <memory>
+#include <atomic>
+#include <chrono>
 
 class SimpleLoopClosureNode : public rclcpp::Node
 {
@@ -67,21 +64,15 @@ private:
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry> SyncPolicy;
     typedef message_filters::Synchronizer<SyncPolicy> Sync;
 
-    // ros::Publisher pub_map_cloud_;
-    // ros::Publisher pub_vis_pose_graph_;
-    // ros::Publisher pub_pgo_odometry_;
-
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_map_cloud_{nullptr};
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_vis_pose_graph_{nullptr};
-    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_pgo_odometry_{nullptr};
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_map_cloud_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_vis_pose_graph_;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_pgo_odometry_;
 
 
     message_filters::Subscriber<sensor_msgs::msg::PointCloud2> sub_cloud_;
     message_filters::Subscriber<nav_msgs::msg::Odometry> sub_odom_;
     std::shared_ptr<Sync> synchronizer_;
 
-    // ros::Subscriber sub_save_req_;
-    // rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_save_req_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_save_req_;
 
     std_msgs::msg::ColorRGBA odom_edge_color_;
@@ -132,8 +123,8 @@ private:
     double fitness_score_th_;
     int vis_map_cloud_frame_interval_;
 
-    bool stop_loop_closure_thread_;
-    bool stop_visualize_thread_;
+    std::atomic<bool> stop_loop_closure_thread_;
+    std::atomic<bool> stop_visualize_thread_;
 
     std::thread save_thread_;
     bool saving_;
