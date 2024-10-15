@@ -60,6 +60,31 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# add_executable(test_lc_node src/test.cpp)
+# ament_target_dependencies(test_lc_node
+#   "pcl_conversions"
+#   "rcl_interfaces"
+#   "rclcpp"
+#   "rcutils"
+#   "sensor_msgs"
+#   "nav_msgs"
+#   "std_msgs"
+#   "geometry_msgs"
+#   "pcl_ros"
+#   "visualization_msgs"
+#   "tf2"
+#   "tf2_eigen"
+# )
+# target_link_libraries(test_lc_node
+#   ${Boost_LIBRARIES}
+#   ${PCL_LIBRARIES}
+#   gtsam
+# )
+# install(TARGETS
+#   test_lc_node
+#   DESTINATION lib/${PROJECT_NAME}
+# )
+
 install(DIRECTORY config launch 
   DESTINATION share/${PROJECT_NAME} 
 )

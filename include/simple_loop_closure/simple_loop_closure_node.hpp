@@ -11,7 +11,6 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
-// #include <eigen_conversions/eigen_msg.h>
 #include <tf2_eigen/tf2_eigen.hpp>
 
 #include <Eigen/Dense>
@@ -126,6 +125,8 @@ private:
     std::atomic<bool> stop_loop_closure_thread_;
     std::atomic<bool> stop_visualize_thread_;
 
+    std::thread loop_close_thread_;
+    std::thread visualize_thread_;
     std::thread save_thread_;
     bool saving_;
     std::string save_directory_;

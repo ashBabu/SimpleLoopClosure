@@ -29,6 +29,7 @@ def generate_launch_description():
 
     node_loop_closure = Node(
         package='simple_loop_closure',
+        # executable='test_lc_node',
         executable='simple_loop_closure_node',
         name='simple_loop_closure',
         output='both',

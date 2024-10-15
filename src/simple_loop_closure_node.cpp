@@ -8,8 +8,6 @@ SimpleLoopClosureNode::SimpleLoopClosureNode() : Node("simple_loop_closure")
 
 void SimpleLoopClosureNode::initialize()
 {
-  // nh_ = ros::NodeHandle();
-  // nh_private_ = ros::NodeHandle("~");
   pub_map_cloud_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/pgo_map_cloud", 1);
   pub_vis_pose_graph_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/vis_pose_graph", 1);
   pub_pgo_odometry_ = this->create_publisher<nav_msgs::msg::Odometry>("/pgo_odom", 1);
@@ -47,13 +45,11 @@ void SimpleLoopClosureNode::initialize()
   this->get_parameter("vis_map_cloud_frame_interval", vis_map_cloud_frame_interval_);
 
   search_radius_ *= search_radius_;
+  stop_loop_closure_thread_ = false;
+  stop_visualize_thread_ = false;
 
   sub_cloud_.subscribe(this, "/cloud");
   sub_odom_.subscribe(this, "/odometry");
-
-  // synchronizer_.reset(new Sync(SyncPolicy(50), sub_cloud_, sub_odom_));
-  // synchronizer_.reset(new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(50), sub_cloud_, sub_odom_));
-  // synchronizer_->setMaxIntervalDuration(rclcpp::Duration(time_stamp_tolerance_, 0));
 
   synchronizer_ = std::make_shared<Sync>(SyncPolicy(50), sub_cloud_, sub_odom_);
   synchronizer_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(time_stamp_tolerance_));
@@ -111,15 +107,26 @@ void SimpleLoopClosureNode::initialize()
   node_scale_ = 0.15;
 
   saving_ = false;
+
+  // Start Threads
+  loop_close_thread_ = std::thread(&SimpleLoopClosureNode::loopCloseThread, this);
+  visualize_thread_ = std::thread(&SimpleLoopClosureNode::visualizeThread, this);
+
+  RCLCPP_INFO(this->get_logger(), "Loop Closure Node Initialized.");
+}
+
+void makeDirectory(const std::string& directory)
+{
+  if (!std::filesystem::is_directory(directory) || !std::filesystem::exists(directory))
+  {                                                // Check if directory exists
+    std::filesystem::create_directory(directory);  // create directory
+  }
 }
 
 bool SimpleLoopClosureNode::saveEachFrames()
 {
   std::string frames_directory = save_directory_ + "frames/";
-  if (!std::filesystem::create_directory(frames_directory))
-  {
-    return false;
-  }
+  makeDirectory(frames_directory);
 
   int optimization_result_size = 0;
   {
@@ -138,6 +145,7 @@ bool SimpleLoopClosureNode::saveEachFrames()
   std::ofstream poses_csv_file(poses_csv_filename);
   if (!poses_csv_file)
   {
+    RCLCPP_WARN(this->get_logger(), "Failed to open poses CSV file: %s", poses_csv_filename.c_str());
     return false;
   }
   poses_csv_file << "index, timestamp, x, y, z, qx, qy, qz, qw" << std::endl;
@@ -174,11 +182,7 @@ void SimpleLoopClosureNode::saveThread()
 {
   PointCloudType::Ptr map_cloud = constructPointCloudMap();
 
-  if (map_cloud == NULL)
-  {
-    RCLCPP_WARN_STREAM(this->get_logger(), "Point cloud map is empty.");
-  }
-  else if (map_cloud->empty())
+  if (map_cloud == nullptr || map_cloud->empty())
   {
     RCLCPP_WARN_STREAM(this->get_logger(), "Point cloud map is empty.");
   }
@@ -193,12 +197,11 @@ void SimpleLoopClosureNode::saveThread()
       pcl::io::savePCDFileBinary(save_directory_ + "map.pcd", *map_cloud);
       RCLCPP_INFO_STREAM(this->get_logger(), "Save completed.");
     }
-    catch (...)
+    catch (const std::exception& e)
     {
-      RCLCPP_WARN_STREAM(this->get_logger(), "Save failed.");
+      RCLCPP_WARN(this->get_logger(), "Save failed: %s", e.what());
     }
   }
-
   saving_ = false;
 }
 
@@ -211,7 +214,7 @@ void SimpleLoopClosureNode::saveRequestCallback(const std_msgs::msg::String::Con
   }
 
   save_directory_ = directory->data;
-  if (save_directory_.back() != '/')
+  if (!save_directory_.empty() && save_directory_.back() != '/')
     save_directory_ += '/';
 
   RCLCPP_INFO_STREAM(this->get_logger(), "Start Saving.");
@@ -309,7 +312,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr SimpleLoopClosureNode::constructPointCloudM
   }
 
   if (optimization_result_size <= 0)
-    return NULL;
+    return nullptr;
 
   // PointCloudType::Ptr map_cloud(new PointCloudType);
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud(new PointCloudType);
@@ -756,21 +759,21 @@ bool SimpleLoopClosureNode::updateISAM2(const gtsam::NonlinearFactorGraph& graph
 void SimpleLoopClosureNode::visualizeThread()
 {
   // rclcpp::Rate rate(1);
-  const std::chrono::seconds rate_duration(1);
+  // const std::chrono::seconds rate_duration(1);
+  rclcpp::Rate rate(1);  // 1 Hz
   while (rclcpp::ok() && !stop_visualize_thread_)
   {
     PointCloudType::Ptr map_cloud = constructPointCloudMap(vis_map_cloud_frame_interval_);
     publishMapCloud(map_cloud);
     publishVisualizationGraph();
-    // rate.sleep();
-    std::this_thread::sleep_for(rate_duration);
+    rate.sleep();
+    // std::this_thread::sleep_for(rate_duration);
   }
 }
 
 void SimpleLoopClosureNode::loopCloseThread()
 {
-  // rclcpp::Rate rate(1);
-  const std::chrono::seconds rate_duration(1);
+  rclcpp::Rate rate(1);
   while (rclcpp::ok() && !stop_loop_closure_thread_)
   {
     gtsam::NonlinearFactorGraph graph;
@@ -781,45 +784,21 @@ void SimpleLoopClosureNode::loopCloseThread()
     constructLoopEdge(graph);
     updateISAM2(graph, init_estimate);
 
-    // rate.sleep();
-    std::this_thread::sleep_for(rate_duration);
+    rate.sleep();
   }
 }
 
 void SimpleLoopClosureNode::spin()
 {
-  stop_loop_closure_thread_ = false;
-  stop_visualize_thread_ = false;
-
-  std::thread loop_close_thread(&SimpleLoopClosureNode::loopCloseThread, this);
-  std::thread visualize_thread(&SimpleLoopClosureNode::visualizeThread, this);
-
   RCLCPP_INFO(this->get_logger(), "Loop Closure Started");
-  // rclcpp::spin(Node);
-  // rclcpp::spin(this->Node);
-  // rclcpp::spin(shared_from_this());
-
-  stop_loop_closure_thread_ = true;
-  stop_visualize_thread_ = true;
-
-  loop_close_thread.join();
-  visualize_thread.join();
-  // if (loop_close_thread.joinable())
-    // loop_close_thread.join();
-  // if (visualize_thread.joinable())
-    // visualize_thread.join();
-  if (save_thread_.joinable())
-    save_thread_.join();
+  rclcpp::spin(shared_from_this());
 }
 
 int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
-  // SimpleLoopClosureNode loop_closure_node;
-  SimpleLoopClosureNode::Ptr loop_closure_node = std::make_shared<SimpleLoopClosureNode>();
-  // auto loop_closure_node = std::make_shared<SharedSimpleLoopClosureNode>();
+  auto loop_closure_node = std::make_shared<SimpleLoopClosureNode>();
   loop_closure_node->spin();
-  rclcpp::spin(loop_closure_node);  // Call spin method of the node
   rclcpp::shutdown();
   return 0;
 }
