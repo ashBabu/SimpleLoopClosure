@@ -3,7 +3,6 @@
 SimpleLoopClosureNode::SimpleLoopClosureNode() : Node("simple_loop_closure")
 {
   initialize();
-  // spin();
 }
 
 void SimpleLoopClosureNode::initialize()
@@ -56,8 +55,6 @@ void SimpleLoopClosureNode::initialize()
   synchronizer_->registerCallback(std::bind(&SimpleLoopClosureNode::pointCloudAndOdometryCallback, this,
                                             std::placeholders::_1, std::placeholders::_2));
 
-  // sub_save_req_  = this->create_subscription<std_msgs::msg::String>("/save_req", 1,
-  // &SimpleLoopClosureNode::saveRequestCallback, this);
   sub_save_req_ = this->create_subscription<std_msgs::msg::String>(
       "/save_req", 10, std::bind(&SimpleLoopClosureNode::saveRequestCallback, this, std::placeholders::_1));
 
@@ -194,6 +191,7 @@ void SimpleLoopClosureNode::saveThread()
       {
         throw std::runtime_error("Save failed");
       }
+      std::cout<<"SAVE DIRECTORY: "<<save_directory_<<std::endl;
       pcl::io::savePCDFileBinary(save_directory_ + "map.pcd", *map_cloud);
       RCLCPP_INFO_STREAM(this->get_logger(), "Save completed.");
     }
@@ -245,7 +243,6 @@ void SimpleLoopClosureNode::publishPoseGraphOptimizedOdometry(const Eigen::Affin
   }
 
   nav_msgs::msg::Odometry pgo_odom_msg = odom_msg;
-  // tf2::toMsg(pgo_affine, pgo_odom_msg.pose.pose);
   pgo_odom_msg.pose.pose = tf2::toMsg(pgo_affine);
   pub_pgo_odometry_->publish(pgo_odom_msg);
 }
@@ -314,7 +311,6 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr SimpleLoopClosureNode::constructPointCloudM
   if (optimization_result_size <= 0)
     return nullptr;
 
-  // PointCloudType::Ptr map_cloud(new PointCloudType);
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud(new PointCloudType);
   map_cloud->reserve((size_t)((double)(first_cloud_size * optimization_result_size) * 1.5));
   for (int i = 0; i < optimization_result_size; i += (interval + 1))
@@ -758,8 +754,6 @@ bool SimpleLoopClosureNode::updateISAM2(const gtsam::NonlinearFactorGraph& graph
 
 void SimpleLoopClosureNode::visualizeThread()
 {
-  // rclcpp::Rate rate(1);
-  // const std::chrono::seconds rate_duration(1);
   rclcpp::Rate rate(1);  // 1 Hz
   while (rclcpp::ok() && !stop_visualize_thread_)
   {
@@ -767,7 +761,6 @@ void SimpleLoopClosureNode::visualizeThread()
     publishMapCloud(map_cloud);
     publishVisualizationGraph();
     rate.sleep();
-    // std::this_thread::sleep_for(rate_duration);
   }
 }
 

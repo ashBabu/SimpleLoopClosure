@@ -29,14 +29,11 @@ def generate_launch_description():
 
     node_loop_closure = Node(
         package='simple_loop_closure',
-        # executable='test_lc_node',
         executable='simple_loop_closure_node',
         name='simple_loop_closure',
         output='both',
         parameters=[arg_loop_closure_params_file],
         remappings=remappings,
-        # respawn=True,
-        # respawn_delay=3
     )
     ld.add_action(node_loop_closure)
 
